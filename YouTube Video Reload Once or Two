@@ -1,0 +1,47 @@
+// ==UserScript==
+// @name         YouTube Video Reload Once
+// @namespace    http://tampermonkey.net/
+// @version      0.3
+// @description  Перезагрузка страниц с видео на YouTube один раз
+// @author       You
+// @match        *://www.youtube.com/watch?v=*
+// @grant        none
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // Ключ для отслеживания состояния перезагрузки
+    const reloadKey = 'youtubeReloaded';
+
+    // Проверяем, был ли уже выполнен reload
+    if (localStorage.getItem(reloadKey) === null) {
+        // Устанавливаем ключ и перезагружаем страницу
+        localStorage.setItem(reloadKey, 'true');
+        window.location.reload();
+    } else {
+        // После перезагрузки сбрасываем ключ
+        localStorage.removeItem(reloadKey);
+    }
+})();
+
+/*
+//Двойная перезагрузка
+
+(function() {
+    'use strict';
+
+    const reloadKey = 'youtubeReloadCount';
+    const maxReloads = 2;
+
+    let reloadCount = parseInt(localStorage.getItem(reloadKey)) || 0;
+
+    if (reloadCount < maxReloads) {
+        localStorage.setItem(reloadKey, reloadCount + 1);
+        window.location.reload();
+    } else {
+        localStorage.removeItem(reloadKey);
+    }
+})();
+
+*/
