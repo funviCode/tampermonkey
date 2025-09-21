@@ -1,0 +1,19 @@
+// ==UserScript==
+// @name         Google Captcha Redirect
+// @namespace    http://tampermonkey.net/
+// @version      0.1
+// @description  Redirect from Google Captcha page using continue parameter
+// @author       You
+// @match        *://www.google.com/sorry/*
+// @grant        none
+// ==/UserScript==
+
+(function(){
+  var urlParams = new URLSearchParams(window.location.search);
+  var continueUrl = urlParams.get('continue');
+  if (continueUrl) {
+    window.location.href = continueUrl;
+  } else {
+    alert("Параметр 'continue' не найден в URL.");
+  }
+})();
