@@ -1,0 +1,447 @@
+// ==UserScript==
+// @name         Ozon Tools: Infinite Scroll + Review Filter
+// @namespace    http://tampermonkey.net/
+// @version      1.4
+// @description  Бесконечный автоскролл и фильтр товаров по отзывам для Ozon
+// @author       You
+// @match        https://www.ozon.ru/*
+// @match        https://ozon.ru/*
+// @icon         https://www.google.com/s2/favicons?sz=64&domain=ozon.ru
+// @grant        GM_addStyle
+// @grant        GM_setValue
+// @grant        GM_getValue
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // Конфигурация
+    const config = {
+        scrollSpeed: 20,
+        scrollStep: 100,
+        minReviews: GM_getValue('minReviews', 1000),
+        buttonColor: '#005bff',
+        buttonTextColor: '#ffffff',
+        filterButtonColor: '#ff6b35',
+        inputButtonColor: '#00a046'
+    };
+
+    let scrollInterval = null;
+    let isScrolling = false;
+    let isFilterActive = false;
+    let lastHeight = 0;
+    let observer = null;
+
+    // Создаем стили для компактного интерфейса
+    GM_addStyle(`
+        .ozon-tools-container {
+            position: fixed;
+            z-index: 10000;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            top: 15px;
+            right: 15px;
+            background: rgba(255, 255, 255, 0.98);
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+            backdrop-filter: blur(8px);
+            border: 1px solid #e0e0e0;
+            min-width: 140px;
+            transform: scale(0.9);
+            transform-origin: top right;
+        }
+
+        .ozon-tool-btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 11px;
+            font-weight: 500;
+            cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            width: 100%;
+            justify-content: center;
+            line-height: 1.2;
+        }
+
+        .ozon-tool-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.15);
+        }
+
+        .ozon-tool-btn:active {
+            transform: translateY(0);
+        }
+
+        .scroll-indicator,
+        .filter-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 1.5s infinite;
+        }
+
+        .scroll-indicator {
+            background-color: #ff4444;
+        }
+
+        .filter-indicator {
+            background-color: #00cc66;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 5px;
+            margin: 5px 0;
+        }
+
+        .review-input {
+            flex: 1;
+            padding: 4px 6px;
+            border: 1px solid #d0d0d0;
+            border-radius: 3px;
+            font-size: 11px;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.2s ease;
+            height: 20px;
+        }
+
+        .review-input:focus {
+            border-color: #005bff;
+        }
+
+        .apply-btn {
+            padding: 4px 8px;
+            background-color: ${config.inputButtonColor};
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 11px;
+            height: 20px;
+            transition: background-color 0.2s ease;
+        }
+
+        .apply-btn:hover {
+            background-color: #008c38;
+        }
+
+        .stats-display {
+            padding: 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            color: #333;
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            margin-top: 4px;
+        }
+
+        .stats-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 2px;
+        }
+
+        .stats-value {
+            font-weight: 600;
+            color: #005bff;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.4; }
+            100% { opacity: 1; }
+        }
+
+        /* Скрываем при необходимости */
+        .ozon-tools-container.hidden {
+            opacity: 0.3;
+        }
+
+        .ozon-tools-container.hidden:hover {
+            opacity: 1;
+        }
+    `);
+
+    // Функция для создания интерфейса
+    function createToolsContainer() {
+        const container = document.createElement('div');
+        container.className = 'ozon-tools-container';
+
+        // Поле ввода
+        const inputGroup = document.createElement('div');
+        inputGroup.className = 'input-group';
+
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.className = 'review-input';
+        input.placeholder = 'Отзывов мин';
+        input.value = config.minReviews;
+        input.min = 0;
+
+        const applyBtn = document.createElement('button');
+        applyBtn.className = 'apply-btn';
+        applyBtn.textContent = '✓';
+        applyBtn.title = 'Применить значение';
+
+        inputGroup.appendChild(input);
+        inputGroup.appendChild(applyBtn);
+
+        // Кнопки
+        const scrollBtn = createButton('Скролл', config.buttonColor, 'scroll');
+        const filterBtn = createButton('Фильтр', config.filterButtonColor, 'filter');
+
+        container.appendChild(inputGroup);
+        container.appendChild(scrollBtn);
+        container.appendChild(filterBtn);
+        document.body.appendChild(container);
+
+        return { container, input, applyBtn, scrollBtn, filterBtn };
+    }
+
+    function createButton(text, color, type) {
+        const btn = document.createElement('button');
+        btn.className = 'ozon-tool-btn';
+        btn.style.backgroundColor = color;
+        btn.style.color = config.buttonTextColor;
+        btn.dataset.type = type;
+
+        const indicator = document.createElement('div');
+        indicator.className = type === 'scroll' ? 'scroll-indicator' : 'filter-indicator';
+        indicator.style.display = 'none';
+
+        const textSpan = document.createElement('span');
+        textSpan.textContent = text;
+
+        btn.appendChild(indicator);
+        btn.appendChild(textSpan);
+
+        return btn;
+    }
+
+    // Функции для скролла
+    function startInfiniteScroll() {
+        if (isScrolling) return;
+
+        isScrolling = true;
+        lastHeight = document.body.scrollHeight;
+
+        scrollInterval = setInterval(() => {
+            window.scrollBy(0, config.scrollStep);
+
+            const currentHeight = document.body.scrollHeight;
+            if (currentHeight !== lastHeight) {
+                lastHeight = currentHeight;
+            }
+        }, config.scrollSpeed);
+
+        updateButtonState('scroll', true);
+    }
+
+    function stopInfiniteScroll() {
+        if (!isScrolling) return;
+
+        clearInterval(scrollInterval);
+        scrollInterval = null;
+        isScrolling = false;
+
+        updateButtonState('scroll', false);
+    }
+
+    // Функции для фильтра
+    function startFilter() {
+        if (isFilterActive) return;
+
+        isFilterActive = true;
+        filterProducts();
+        setupFilterObserver();
+
+        updateButtonState('filter', true);
+    }
+
+    function stopFilter() {
+        if (!isFilterActive) return;
+
+        isFilterActive = false;
+        if (observer) {
+            observer.disconnect();
+        }
+        showAllProducts();
+
+        updateButtonState('filter', false);
+    }
+
+    function updateMinReviews(value) {
+        const newValue = parseInt(value, 10);
+        if (!isNaN(newValue) && newValue >= 0) {
+            config.minReviews = newValue;
+            GM_setValue('minReviews', newValue);
+
+            if (isFilterActive) {
+                filterProducts();
+            }
+
+            return true;
+        }
+        return false;
+    }
+
+    function parseCount(text) {
+        if (!text) return NaN;
+        return parseInt(text.replace(/\u00A0/g, '').replace(/\D/g, ''), 10);
+    }
+
+    function filterProducts() {
+        const parentSelector = '.iq7_24.tile-root.i0x_24.i1x_24';
+        const reviewTextSelector = 'span[style*="--textSecondary"]';
+
+        const cards = document.querySelectorAll(parentSelector);
+        let hidden = 0;
+        let shown = 0;
+
+        cards.forEach(card => {
+            const span = card.querySelector(reviewTextSelector);
+            const count = parseCount(span?.textContent || '');
+
+            if (!span || isNaN(count) || count < config.minReviews) {
+                card.style.setProperty('display', 'none', 'important');
+                hidden++;
+            } else {
+                card.style.removeProperty('display');
+                shown++;
+            }
+        });
+
+        updateStats(shown, hidden);
+    }
+
+    function showAllProducts() {
+        const cards = document.querySelectorAll('.iq7_24.tile-root.i0x_24.i1x_24');
+        cards.forEach(card => {
+            card.style.removeProperty('display');
+        });
+        removeStats();
+    }
+
+    function setupFilterObserver() {
+        observer = new MutationObserver((mutations) => {
+            let shouldFilter = false;
+            for (const mutation of mutations) {
+                if (mutation.addedNodes.length > 0) {
+                    shouldFilter = true;
+                    break;
+                }
+            }
+            if (shouldFilter) {
+                setTimeout(filterProducts, 100);
+            }
+        });
+
+        observer.observe(document.body, { childList: true, subtree: true });
+    }
+
+    function updateStats(shown, hidden) {
+        removeStats();
+
+        const stats = document.createElement('div');
+        stats.className = 'stats-display';
+        stats.innerHTML = `
+            <div class="stats-row">
+                <span>Пок:</span>
+                <span class="stats-value">${shown}</span>
+            </div>
+            <div class="stats-row">
+                <span>Скр:</span>
+                <span class="stats-value">${hidden}</span>
+            </div>
+            <div class="stats-row">
+                <span>Мин:</span>
+                <span class="stats-value">${config.minReviews}</span>
+            </div>
+        `;
+
+        const container = document.querySelector('.ozon-tools-container');
+        container.appendChild(stats);
+    }
+
+    function removeStats() {
+        const stats = document.querySelector('.stats-display');
+        if (stats) {
+            stats.remove();
+        }
+    }
+
+    function updateButtonState(type, isActive) {
+        const btn = document.querySelector(`.ozon-tool-btn[data-type="${type}"]`);
+        const indicator = btn.querySelector('div');
+        const text = btn.querySelector('span');
+
+        if (isActive) {
+            btn.style.opacity = '0.9';
+            indicator.style.display = 'block';
+        } else {
+            btn.style.opacity = '1';
+            indicator.style.display = 'none';
+        }
+    }
+
+    // Инициализация
+    function init() {
+        setTimeout(() => {
+            const { input, applyBtn, scrollBtn, filterBtn } = createToolsContainer();
+
+            // Обработчики для кнопок
+            scrollBtn.addEventListener('click', () => {
+                if (isScrolling) stopInfiniteScroll();
+                else startInfiniteScroll();
+            });
+
+            filterBtn.addEventListener('click', () => {
+                if (isFilterActive) stopFilter();
+                else startFilter();
+            });
+
+            applyBtn.addEventListener('click', () => {
+                updateMinReviews(input.value);
+            });
+
+            input.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    updateMinReviews(input.value);
+                }
+            });
+
+            // Горячие клавиши
+            document.addEventListener('keydown', (e) => {
+                if (e.code === 'Space' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+                    e.preventDefault();
+                    if (isScrolling) stopInfiniteScroll();
+                    else startInfiniteScroll();
+                }
+
+                if (e.code === 'KeyF' && e.ctrlKey) {
+                    e.preventDefault();
+                    if (isFilterActive) stopFilter();
+                    else startFilter();
+                }
+            });
+
+        }, 2000);
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+
+})();
