@@ -12,6 +12,11 @@
 // @grant        GM_getValue
 // ==/UserScript==
 
+        const parentSelector = 'div.tile-root[data-index]';
+        const reviewTextSelector = 'span[style*="--textSecondary"]';
+const cards = document.querySelectorAll('div.tile-root[data-index]');
+
+
 (function() {
     'use strict';
 
@@ -301,8 +306,6 @@
     }
 
     function filterProducts() {
-        const parentSelector = '.iq7_24.tile-root.i0x_24.i1x_24';
-        const reviewTextSelector = 'span[style*="--textSecondary"]';
 
         const cards = document.querySelectorAll(parentSelector);
         let hidden = 0;
@@ -325,7 +328,6 @@
     }
 
     function showAllProducts() {
-        const cards = document.querySelectorAll('.iq7_24.tile-root.i0x_24.i1x_24');
         cards.forEach(card => {
             card.style.removeProperty('display');
         });
